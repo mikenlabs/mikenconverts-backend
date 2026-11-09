@@ -34,6 +34,16 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const frontendPath = path.resolve(__dirname, "..", "frontend");
 app.use(express.static(frontendPath));
 
+const UPSTREAM = "https://open.er-api.com/v6/latest";
+
+async function fetchRate(from, to) {
+  const url = `${UPSTREAM}/${encodeURIComponent(from)}`;
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  const data = await res.json();
+  return data.rates?.[to] ?? null;
+}
+
 app.get("/api/convert", async (req, res) => {
   const { from, to, amount } = req.query;
 
@@ -44,19 +54,10 @@ app.get("/api/convert", async (req, res) => {
   const numericAmount = Number(amount);
 
   try {
-    const upstream = await fetch(
-      `https://api.frankfurter.app/latest?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
-    );
+    const rate = await fetchRate(from, to);
 
-    if (!upstream.ok) {
-      return res.status(502).json({ error: "Failed to fetch exchange rates from upstream provider" });
-    }
-
-    const data = await upstream.json();
-    const rate = data.rates[to];
-
-    if (rate === undefined) {
-      return res.status(400).json({ error: `Unsupported currency: ${to}` });
+    if (rate === null) {
+      return res.status(400).json({ error: `Unsupported currency pair: ${from} → ${to}` });
     }
 
     const converted = numericAmount * rate;
@@ -67,10 +68,21 @@ app.get("/api/convert", async (req, res) => {
       amount: numericAmount,
       rate,
       converted: Number(converted.toFixed(6)),
-      date: data.date,
+      date: new Date().toISOString().split("T")[0],
     });
   } catch (err) {
     return res.status(500).json({ error: "Internal server error during conversion" });
+  }
+});
+
+app.get("/api/currencies", async (req, res) => {
+  try {
+    const resUpstream = await fetch(`${UPSTREAM}/USD`);
+    if (!resUpstream.ok) return res.status(502).json({ error: "Failed to fetch currencies" });
+    const data = await resUpstream.json();
+    return res.json(data.rates || {});
+  } catch {
+    return res.status(500).json({ error: "Failed to fetch currencies" });
   }
 });
 
